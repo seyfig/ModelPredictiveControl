@@ -71,6 +71,7 @@ int main() {
   // MPC is initialized here!
   MPC mpc;
 
+
   h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -98,16 +99,6 @@ int main() {
           // Car speed
           double v = j[1]["speed"];
 
-          // DEBUG
-          //std::cout<<"px:"<<px<<"; py:"<<py<<"; psi:"<<psi<<"; v:"<<v<<std::endl;
-
-          /*
-          * TODO: Calculate steering angle and throttle using MPC.
-          *
-          * Both are in between [-1, 1].
-          *
-          */
-
           for (uint i = 0; i < ptsx.size(); i++) {
             //shift car reference angle to 90 degrees
             double shift_x = ptsx[i] - px;
@@ -120,11 +111,6 @@ int main() {
           double* ptrx = &ptsx[0];
           Eigen::Map<Eigen::VectorXd> ptsx_transform(ptrx,6);
 
-          //DEBUG
-          //std::cout<<"ptsx:"<<ptsx<<std::endl;
-          //std::cout<<"ptrx:"<<&ptrx<<std::endl;
-
-
           double* ptry = &ptsy[0];
           Eigen::Map<Eigen::VectorXd> ptsy_transform(ptry,6);
 
@@ -136,16 +122,9 @@ int main() {
           double epsi = -atan(coeffs[1]);
 
 
-          // If there is delay, try to estimate what like forward in time
-          // that state vector would be although it's kind of an estimation
-          // a lot of ways
-          // because this throttle is not the same thing as acceleration
-          // but for low delays it is a nive estimator
-          // because we're not really given the acceleration of the car
-          double steer_value = j[1]["steering_angle"];
-          double throttle_value = j[1]["throttle"];
 
-
+          //double steer_value = j[1]["steering_angle"];
+          //double throttle_value = j[1]["throttle"];
 
           Eigen::VectorXd state(6);
           state<<0,0,0,v,cte,epsi;
@@ -206,9 +185,6 @@ int main() {
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
 
-          // DEBUG
-          //std::cout<<"STR_VAL:"<<steer_value<<"; STR_NEW:"<<vars[0]/(deg2rad(25)*Lf)<<"; THR_VAL:"<<throttle_value<<"; THR_NEW:"<<vars[1]<<std::endl;
-          //std::cout << msg << std::endl;
           // Latency
           // The purpose is to mimic real driving conditions where
           // the car does actuate the commands instantly.
@@ -218,10 +194,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          //this_thread::sleep_for(chrono::milliseconds(100));
-          if (delay > 0.0) {
-            this_thread::sleep_for(chrono::milliseconds((int)(delay * 1000.0)));
-          }
+          this_thread::sleep_for(chrono::milliseconds(100));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {

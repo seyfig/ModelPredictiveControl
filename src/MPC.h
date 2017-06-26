@@ -7,6 +7,14 @@
 using namespace std;
 
 class MPC {
+private:
+	/* Properties for log */
+	double total_speed;
+	double max_speed;
+	double max_cte;
+	double max_epsi;
+	double max_steering;
+	double counter;
  public:
   MPC();
 
