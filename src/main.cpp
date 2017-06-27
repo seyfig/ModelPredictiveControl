@@ -12,6 +12,9 @@
 // for convenience
 using json = nlohmann::json;
 
+const double delay = 0.1;
+const double Lf = 2.67;
+
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
@@ -97,7 +100,21 @@ int main() {
           // Car psi
           double psi = j[1]["psi"];
           // Car speed
+          //double v = j[1]["speed"] * 1609.344 / 3600;
           double v = j[1]["speed"];
+          v *= 0.44704;
+
+          double steer_value = j[1]["steering_angle"];
+          double throttle_value = j[1]["throttle"];
+
+          steer_value *= -1.0;
+
+          //std::cout<<"PRE:"<<px<<";"<<py<<";"<<psi<<";"<<v<<";"<<std::endl;
+          //std::cout<<"SV:"<<steer_value<<std::endl;
+          px += v * cos(psi) * delay;
+          py += v * sin(psi) * delay;
+          psi += v * steer_value / Lf * delay;
+          v += throttle_value * delay;
 
           for (uint i = 0; i < ptsx.size(); i++) {
             //shift car reference angle to 90 degrees
@@ -121,25 +138,21 @@ int main() {
           // double epsi = psi - atan(coeffs[1] + 2 * px * coeffs[2] + 3 * coeffs[3] * pow(px, 2));
           double epsi = -atan(coeffs[1]);
 
-
-
-          //double steer_value = j[1]["steering_angle"];
-          //double throttle_value = j[1]["throttle"];
+          //std::cout<<"PRE:"<<px<<";"<<py<<";"<<psi<<";"<<v<<";"<<cte<<";"<<epsi<<std::endl;
 
           Eigen::VectorXd state(6);
           state<<0,0,0,v,cte,epsi;
+          //state<<,dly_y,dly_psi,dly_v,dly_cte,dly_epsi;
 
-          double delay = 0.1;
 
-          auto vars = mpc.Solve(state, coeffs, delay);
+          auto vars = mpc.Solve(state, coeffs);
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
           // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
           //msgJson["steering_angle"] = steer_value;
           //msgJson["throttle"] = throttle_value;
-          double Lf = 2.67;
-          msgJson["steering_angle"] = vars[0]/(deg2rad(25)*Lf);
+          msgJson["steering_angle"] = -vars[0]/(deg2rad(25));
           //msgJson["steering_angle"] = vars[0];
           msgJson["throttle"] = vars[1];
 

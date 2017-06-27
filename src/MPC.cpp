@@ -1,33 +1,21 @@
 #include "MPC.h"
+#include "params.h"
 #include <cppad/cppad.hpp>
 #include <cppad/ipopt/solve.hpp>
 #include "Eigen-3.3/Eigen/Core"
 
 using CppAD::AD;
 
+params param;
 // TODO: Set the timestep length and duration
-size_t N = 10;
-double dt = 0.17;
+size_t N = param.N;
+double dt = param.dt;
 
 const double Lf = 2.67;
 
-double ref_max_v = 160.0;
-double ref_min_v = 100.0;
-double ref_v = ref_max_v;
-double ref_v_sub = (ref_max_v - ref_min_v) / 4.5;
-// Add cost for cte > cte_limit
-double cte_limit = 3.5;
-// Add cost for cte > cte_limit2
-double cte_limit2 = 2.0;
-
-// Cost multiplier for cte_limit
-double c_cte_l = 1050.0;
-// Cost multiplier for cte_limit2
-double c_cte_l2 = 200.0;
-double c_cte = 20.0;
-double c_epsi = 1600.0;
-
-double c_v = 12.0;
+double ref_cte = param.ref_cte;
+double ref_epsi = param.ref_epsi;
+double ref_v = param.ref_v;
 
 size_t x_start = 0;
 size_t y_start = x_start + N;
@@ -35,10 +23,10 @@ size_t psi_start = y_start + N;
 size_t v_start = psi_start + N;
 size_t cte_start = v_start + N;
 size_t epsi_start = cte_start + N;
-// Dummy variables for cte_limit and cte_limit2
-size_t cte_cor_start = epsi_start + N;
-size_t cte_cor_start2 = cte_cor_start + N;
-size_t delta_start = cte_cor_start2 + N;
+// Dummy variables for cte_limit2 and cte_limit3
+size_t cte_cor_start2 = epsi_start + N;
+size_t cte_cor_start3 = cte_cor_start2 + N;
+size_t delta_start = cte_cor_start3 + N;
 size_t a_start = delta_start + N - 1;
 
 class FG_eval {
@@ -56,16 +44,23 @@ class FG_eval {
     fg[0] = 0;
 
     for (uint t = 0; t < N; t++) {
-
-      // Add cost for cte > cte_limit
-      // Increase the effect of cte in previous steps
-      fg[0] += ((10 - t) / 5.5) * c_cte_l * CppAD::pow(vars[cte_start+t] - vars[cte_cor_start+t],2);
+      fg[0] += param.c_cte * CppAD::pow(vars[cte_start+t],2);
       // Add cost for cte > cte_limit2
-      // Increase the effect of cte in previous steps
-      fg[0] += ((10 - t) / 5.5) * c_cte_l2 * CppAD::pow(vars[cte_start+t] - vars[cte_cor_start2+t],2);
-      fg[0] += c_cte * CppAD::pow(vars[cte_start+t],2);
-      fg[0] += c_epsi * CppAD::pow(vars[epsi_start+t],2);
-      fg[0] += c_v * CppAD::pow(vars[v_start+t] - ref_v,2);
+      fg[0] += param.c_cte2 * CppAD::pow(vars[cte_start+t] - vars[cte_cor_start2+t],2);
+      // Add cost for cte > cte_limit3
+      fg[0] += param.c_cte3 * CppAD::pow(vars[cte_start+t] - vars[cte_cor_start3+t],2);
+      fg[0] += param.c_epsi * CppAD::pow(vars[epsi_start+t],2);
+      fg[0] += param.c_v * CppAD::pow(vars[v_start+t] - ref_v,2);
+    }
+
+    for (uint t = 0; t < N - 1; t++) {
+      fg[0] += param.c_str * CppAD::pow(vars[delta_start + t],2);
+      fg[0] += param.c_a * CppAD::pow(vars[a_start + t], 2);
+    }
+
+    for (uint t = 0; t < N - 2; t++) {
+      fg[0] += param.c_str_d * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+      fg[0] += param.c_a_d * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
     }
 
     fg[1 + x_start] = vars[x_start];
@@ -102,11 +97,16 @@ class FG_eval {
                       (coeffs[2] * x0 * x0) +
                       (coeffs[3] * x0 * x0 * x0);
       AD<double> slope0 = coeffs[1] +
-                         (coeffs[2] * 2 * x0) +
-                         (coeffs[3] * 3 * x0 * x0);
+                          (coeffs[2] * 2 * x0) +
+                          (coeffs[3] * 3 * x0 * x0);
       AD<double> psides0 = CppAD::atan(slope0);
+      AD<double> slope1 = coeffs[1] +
+                          (coeffs[2] * 2 * x1) +
+                          (coeffs[3] * 3 * x1 * x1);
+      AD<double> psides1 = CppAD::atan(slope1);
 
-      // TODO: Setup the rest of the model constraints
+      // Add additional cost for slope to start turning in advance
+      fg[0] += param.c_cte_m1 * CppAD::pow(cte0 - (param.c_cte_mm1 * slope1), 2);
 
       // Recall the equations for the model:
       // x_[t+1] = x[t] + v[t] * cos(psi[t]) * dt
@@ -117,10 +117,10 @@ class FG_eval {
       // epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
       fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
       fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
-      fg[1 + psi_start + t] = psi1 - (psi0 - v0 * delta0 / Lf * dt);
+      fg[1 + psi_start + t] = psi1 - (psi0 + v0 * delta0 / Lf * dt);
       fg[1 + v_start + t] = v1 - (v0 + a0 * dt);
       fg[1 + cte_start + t] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
-      fg[1 + epsi_start + t] = epsi1 - ((psi0 - psides0) - v0 * delta0 / Lf * dt);
+      fg[1 + epsi_start + t] = epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);
     }
 
 
@@ -136,12 +136,11 @@ MPC::MPC() {
   this->max_epsi = 0.0;
   this->max_steering = 0.0;
 }
-
 MPC::~MPC() {}
 
-vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double delay) {
+vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   bool ok = true;
-
+  //size_t i;
   typedef CPPAD_TESTVECTOR(double) Dvector;
 
   double x = state[0];
@@ -150,9 +149,6 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
   double v = state[3];
   double cte = state[4];
   double epsi = state[5];
-
-  // Decrease the reference velocity as cte increases
-  ref_v = ref_min_v + (std::max(0.0,(4.5 - fabs(cte))) * ref_v_sub);
 
   this->counter++;
   this->total_speed += v;
@@ -166,22 +162,14 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
     this->max_speed = v;
   }
 
-  // To handle delay
-  int delay_steps = (int)ceil(delay / dt);
-
-  // TODO: Set the number of model variables (includes both states and inputs).
-  // For example: If the state is a 4 element vector, the actuators is a 2
-  // element vector and there are 10 timesteps. The number of variables is:
-  //
-
   // The number of variables
   // 6 * N for model variables
   // 2 * (N - 1) for actuations
   // 2 * N for dummy cte limit variables
+  //size_t n_vars = N * 8 + (N - 1) * 2;
   size_t n_vars = N * 8 + (N - 1) * 2;
-
   // Number of constraints
-  size_t n_constraints = N * 8;
+  size_t n_constraints = N * 6;
 
   // Initial value of the independent variables.
   // SHOULD BE 0 besides initial state.
@@ -190,40 +178,32 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
     vars[i] = 0.0;
   }
 
-  // Set the initial variable values
-  vars[x_start] = x;
-  vars[y_start] = y;
-  vars[psi_start] = psi;
-  vars[v_start] = v;
-  vars[cte_start] = cte;
-  vars[epsi_start] = epsi;
-
   Dvector vars_lowerbound(n_vars);
   Dvector vars_upperbound(n_vars);
 
   // TODO: Set lower and upper limits for variables.
   // Set all non-actuators upper and lowerlimits
   // to the max negative and positive values.
-  for (uint i = 0; i < cte_cor_start; i++) {
+  for (uint i = 0; i < cte_cor_start2; i++) {
     vars_lowerbound[i] = -1.0e19;
     vars_upperbound[i] = 1.0e19;
   }
 
   // Dummy variables should not be greater than the limits
   for (uint i = 0; i < N; i++) {
-    vars_lowerbound[cte_cor_start + i] = -cte_limit;
-    vars_upperbound[cte_cor_start + i] = cte_limit;
+    vars_lowerbound[cte_cor_start2 + i] = -param.cte_limit2;
+    vars_upperbound[cte_cor_start2 + i] = param.cte_limit2;
 
-    vars_lowerbound[cte_cor_start2 + i] = -cte_limit2;
-    vars_upperbound[cte_cor_start2 + i] = cte_limit2;
+    vars_lowerbound[cte_cor_start3 + i] = -param.cte_limit3;
+    vars_upperbound[cte_cor_start3 + i] = param.cte_limit3;
   }
 
   // The upper and lower limits of delta are set to -25 and 25
   // degrees (values in radians).
   // NOTE: Feel free to change this to something else.
   for (uint i = delta_start; i < a_start; i++) {
-    vars_lowerbound[i] = -0.436332 * Lf;
-    vars_upperbound[i] = 0.436332 * Lf;
+    vars_lowerbound[i] = -0.436332;
+    vars_upperbound[i] = 0.436332;
   }
 
   // Acceleration/decceleration upper and lower limits.
@@ -232,6 +212,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
     vars_lowerbound[i] = -1.0;
     vars_upperbound[i] = 1.0;
   }
+
   // Lower and upper limits for the constraints
   // Should be 0 besides initial state.
   Dvector constraints_lowerbound(n_constraints);
@@ -240,6 +221,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
     constraints_lowerbound[i] = 0;
     constraints_upperbound[i] = 0;
   }
+
   constraints_lowerbound[x_start] = x;
   constraints_lowerbound[y_start] = y;
   constraints_lowerbound[psi_start] = psi;
@@ -253,18 +235,6 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
   constraints_upperbound[v_start] = v;
   constraints_upperbound[cte_start] = cte;
   constraints_upperbound[epsi_start] = epsi;
-
-
-  // Assume the actuations are zero during delay
-  if (delay_steps > 0) {
-    for (int i = 0; i < delay_steps; i++) {
-      vars_lowerbound[delta_start + i] = 0.0;
-      vars_lowerbound[a_start + i] = 0.0;
-
-      vars_upperbound[delta_start + i] = 0.0;
-      vars_upperbound[a_start + i] = 0.0;
-    }
-  }
 
   // object that computes objective and constraints
   FG_eval fg_eval(coeffs);
@@ -301,7 +271,6 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
 
   // Cost
   auto cost = solution.obj_value;
-
   // TODO: Return the first actuator values. The variables can be accessed with
   // `solution.x[i]`.
   //
@@ -309,33 +278,33 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
   // creates a 2 element double vector.
   vector<double> result;
 
-  double steering = solution.x[delta_start + delay_steps];
-  if (fabs(steering) > this->max_steering) {
+  //double steering = solution.x[delta_start+param.delay_steps];
+  //double throttle = solution.x[a_start+param.delay_steps];
+  double steering = solution.x[delta_start];
+  double throttle = solution.x[a_start];
+    if (fabs(steering) > this->max_steering) {
     this->max_steering = fabs(steering);
   }
-
 
   std::cout << this->counter << " ";
   std::cout << "Cost: " << cost << "; STR:";
   std::cout << steering;
-  std::cout << "; THR:"<<solution.x[a_start+delay_steps];
-  std::cout << "; spd:"<<v;
+  std::cout << "; THR:"<<throttle;
+  std::cout << "; spd:"<<v / 0.44704;
   std::cout << "; cte:"<<cte<<"; epsi:"<<epsi;
-  std::cout << "; avr_spd:"<<this->total_speed / this->counter;
-  std::cout << "; max_spd:"<<this->max_speed;
+  std::cout << "; avr_spd:"<<this->total_speed / 0.44704 / this->counter;
+  std::cout << "; max_spd:"<<this->max_speed / 0.44704;
   std::cout << "; max_cte:"<<this->max_cte;
   std::cout << "; max_epsi:"<<this->max_epsi;
   std::cout << "; max_str:"<<this->max_steering;
-
-  //std::cout << "; sol?: "<< ok;
-
   std::cout<<std::endl;
 
   if (!ok) {
     std::cout<<std::endl<<" SOLUTION FAILED "<<std::endl<<std::endl;
   }
+
   result.push_back(steering);
-  result.push_back(solution.x[a_start + delay_steps]);
+  result.push_back(throttle);
   for (uint i = 0; i < N - 1; i++) {
     result.push_back(solution.x[x_start + i + 1]);
     result.push_back(solution.x[y_start + i + 1]);
